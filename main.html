@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>序奏 m-3〜m0</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    background: #111;
+    color: #ddd;
+  }
+  h2 { margin-bottom: 8px; font-size: 20px; letter-spacing: 0.05em; }
+  p { font-size: 13px; color: #777; margin-bottom: 28px; }
+  .controls { display: flex; gap: 16px; }
+  button {
+    font-size: 18px;
+    padding: 14px 36px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  #btn-play { background: #4caf50; color: #fff; }
+  #btn-stop { background: #e53935; color: #fff; }
+  button:disabled { opacity: 0.35; cursor: default; }
+  #error { color: #ff6b6b; margin-top: 20px; max-width: 480px; text-align: center; font-size: 14px; }
+</style>
+</head>
+<body>
+<h2>序奏 m-3〜m0</h2>
+<p>BPM 88 / 序奏+A部+B部 約40秒</p>
+<div class="controls">
+  <button id="btn-play" onclick="onPlay()">▶ 再生</button>
+  <button id="btn-stop" onclick="onStop()" disabled>■ 停止</button>
+</div>
+<div id="error"></div>
+
+<div id="progress-wrap" style="
+  width: 640px; max-width: 90vw;
+  margin-top: 24px;
+">
+  <div id="progress-bar-bg" style="
+    width: 100%; height: 8px;
+    background: #333; border-radius: 4px;
+    cursor: pointer; position: relative;
+  ">
+    <div id="progress-bar-fill" style="
+      width: 0%; height: 100%;
+      background: #4caf50; border-radius: 4px;
+      pointer-events: none;
+    "></div>
+  </div>
+  <div style="
+    display: flex; justify-content: space-between;
+    font-size: 12px; color: #555; margin-top: 4px;
+  ">
+    <span id="time-current">0:00</span>
+    <span id="time-total">0:00</span>
+  </div>
+</div>
+
+<script>
+let ctx = null;
+let masterGainNode = null;
+
+const BPM = 88;
+const BEAT = 60 / BPM;
+
+const score = [
+  // ベース
+  { voice:"cello", freq:73.42,  beat:0,    dur:3 }, // D2 m-3
+  { voice:"cello", freq:73.42,  beat:3,    dur:3 }, // D2 m-2
+  { voice:"cello", freq:55.00,  beat:6,    dur:3 }, // A1 m-1
+  { voice:"cello", freq:73.42,  beat:9,    dur:3 }, // D2 m0
+
+  // ハープ m-3
+  { voice:"harp", freq:146.83, beat:0,   dur:0.5 }, // D3
+  { voice:"harp", freq:185.00, beat:0.5, dur:0.5 }, // F#3
+  { voice:"harp", freq:220.00, beat:1,   dur:0.5 }, // A3
+  { voice:"harp", freq:146.83, beat:1.5, dur:0.5 }, // D3
+  { voice:"harp", freq:185.00, beat:2,   dur:0.5 }, // F#3
+  { voice:"harp", freq:220.00, beat:2.5, dur:0.5 }, // A3
+
+  // ハープ m-2
+  { voice:"harp", freq:146.83, beat:3,   dur:0.5 }, // D3
+  { voice:"harp", freq:185.00, beat:3.5, dur:0.5 }, // F#3
+  { voice:"harp", freq:220.00, beat:4,   dur:0.5 }, // A3
+  { voice:"harp", freq:146.83, beat:4.5, dur:0.5 }, // D3
+  { voice:"harp", freq:185.00, beat:5,   dur:0.5 }, // F#3
+  { voice:"harp", freq:293.66, beat:5.5, dur:0.5 }, // D4
+
+  // ハープ m-1
+  { voice:"harp", freq:164.81, beat:6,   dur:0.5 }, // E3
+  { voice:"harp", freq:220.00, beat:6.5, dur:0.5 }, // A3
+  { voice:"harp", freq:277.18, beat:7,   dur:0.5 }, // C#4
+  { voice:"harp", freq:164.81, beat:7.5, dur:0.5 }, // E3
+  { voice:"harp", freq:220.00, beat:8,   dur:0.5 }, // A3
+  { voice:"harp", freq:329.63, beat:8.5, dur:0.5 }, // E4
+
+  // ハープ m0（beat 11.5 は休止）
+  { voice:"harp", freq:146.83, beat:9,    dur:0.5 }, // D3
+  { voice:"harp", freq:185.00, beat:9.5,  dur:0.5 }, // F#3
+  { voice:"harp", freq:220.00, beat:10,   dur:0.5 }, // A3
+  { voice:"harp", freq:146.83, beat:10.5, dur:0.5 }, // D3
+  { voice:"harp", freq:185.00, beat:11,   dur:0.5 }, // F#3
+
+  // 弱起
+  { voice:"flute", freq:440.00, beat:11.5, dur:0.5 }, // A4
+
+  // m1: D5♩ F#5♪ | A5♩.
+  { voice:"flute", freq:587.33, beat:12,   dur:1 },
+  { voice:"flute", freq:739.99, beat:13,   dur:0.5 },
+  { voice:"flute", freq:880.00, beat:13.5, dur:1.5 },
+
+  // m2: G5♩ E5♪ | D5♩.
+  { voice:"flute", freq:783.99, beat:15,   dur:1 },
+  { voice:"flute", freq:659.25, beat:16,   dur:0.5 },
+  { voice:"flute", freq:587.33, beat:16.5, dur:1.5 },
+
+  // m3: F#5♩ G5♪ | A5♩ B5♪
+  { voice:"flute", freq:739.99, beat:18,   dur:1 },
+  { voice:"flute", freq:783.99, beat:19,   dur:0.5 },
+  { voice:"flute", freq:880.00, beat:19.5, dur:1 },
+  { voice:"flute", freq:987.77, beat:20.5, dur:0.5 },
+
+  // m4: A5♩ F#5♪ | D5♩.
+  { voice:"flute", freq:880.00, beat:21,   dur:1 },
+  { voice:"flute", freq:739.99, beat:22,   dur:0.5 },
+  { voice:"flute", freq:587.33, beat:22.5, dur:1.5 },
+
+  // m5: E5♩ D5♪ | C#5♩ B4♪
+  { voice:"flute", freq:659.25, beat:24,   dur:1 },
+  { voice:"flute", freq:587.33, beat:25,   dur:0.5 },
+  { voice:"flute", freq:554.37, beat:25.5, dur:1 },
+  { voice:"flute", freq:493.88, beat:26.5, dur:0.5 },
+
+  // m6: A4♩ B4♪ | C#5♩ D5♪
+  { voice:"flute", freq:440.00, beat:27,   dur:1 },
+  { voice:"flute", freq:493.88, beat:28,   dur:0.5 },
+  { voice:"flute", freq:554.37, beat:28.5, dur:1 },
+  { voice:"flute", freq:587.33, beat:29.5, dur:0.5 },
+
+  // m7: E5♩ F#5♪ | G5♩ A5♪
+  { voice:"flute", freq:659.25, beat:30,   dur:1 },
+  { voice:"flute", freq:739.99, beat:31,   dur:0.5 },
+  { voice:"flute", freq:783.99, beat:31.5, dur:1 },
+  { voice:"flute", freq:880.00, beat:32.5, dur:0.5 },
+
+  // m8: D5♩. | D5♩.
+  { voice:"flute", freq:587.33, beat:33,   dur:1.5 },
+  { voice:"flute", freq:587.33, beat:34.5, dur:0.8 },
+
+  // A部ベース
+  { voice:"cello", freq:146.83, beat:12, dur:3 }, // D3 m1
+  { voice:"cello", freq:98.00,  beat:15, dur:3 }, // G2 m2
+  { voice:"cello", freq:110.00, beat:18, dur:3 }, // A2 m3
+  { voice:"cello", freq:146.83, beat:21, dur:3 }, // D3 m4
+  { voice:"cello", freq:110.00, beat:24, dur:3 }, // A2 m5
+  { voice:"cello", freq:146.83, beat:27, dur:3 }, // D3 m6
+  { voice:"cello", freq:98.00,  beat:30, dur:3 }, // G2 m7
+  { voice:"cello", freq:146.83, beat:33, dur:2.8 }, // D3 m8
+
+  // A部ハープ（内声アルペジオ）
+  { voice:"harp", freq:220.00, beat:12,   dur:0.5 }, // A3
+  { voice:"harp", freq:293.66, beat:12.5, dur:0.5 }, // D4
+  { voice:"harp", freq:369.99, beat:13,   dur:0.5 }, // F#4
+  { voice:"harp", freq:220.00, beat:15,   dur:0.5 }, // A3
+  { voice:"harp", freq:293.66, beat:15.5, dur:0.5 }, // D4
+  { voice:"harp", freq:369.99, beat:16,   dur:0.5 }, // F#4
+  { voice:"harp", freq:220.00, beat:18,   dur:0.5 }, // A3
+  { voice:"harp", freq:277.18, beat:18.5, dur:0.5 }, // C#4
+  { voice:"harp", freq:369.99, beat:19,   dur:0.5 }, // F#4
+  { voice:"harp", freq:220.00, beat:21,   dur:0.5 }, // A3
+  { voice:"harp", freq:293.66, beat:21.5, dur:0.5 }, // D4
+  { voice:"harp", freq:369.99, beat:22,   dur:0.5 }, // F#4
+  { voice:"harp", freq:220.00, beat:24,   dur:0.5 }, // A3
+  { voice:"harp", freq:277.18, beat:24.5, dur:0.5 }, // C#4
+  { voice:"harp", freq:369.99, beat:25,   dur:0.5 }, // F#4
+  { voice:"harp", freq:220.00, beat:27,   dur:0.5 }, // A3
+  { voice:"harp", freq:293.66, beat:27.5, dur:0.5 }, // D4
+  { voice:"harp", freq:369.99, beat:28,   dur:0.5 }, // F#4
+  { voice:"harp", freq:196.00, beat:30,   dur:0.5 }, // G3
+  { voice:"harp", freq:293.66, beat:30.5, dur:0.5 }, // D4
+  { voice:"harp", freq:369.99, beat:31,   dur:0.5 }, // F#4
+  { voice:"harp", freq:220.00, beat:33,   dur:0.5 }, // A3
+  { voice:"harp", freq:293.66, beat:33.5, dur:0.5 }, // D4
+  { voice:"harp", freq:369.99, beat:34,   dur:0.5 }, // F#4
+  { voice:"harp", freq:293.66, beat:34.5, dur:0.5 }, // D4
+  { voice:"harp", freq:220.00, beat:35,   dur:0.5 }, // A3
+
+  // ── B部 m9〜m16 ──
+
+  // 弱起 E5
+  { voice:"flute", freq:659.25, beat:35.5, dur:0.5 },
+
+  // m9: E5♩ G#5♪ | B5♩.
+  { voice:"flute", freq:659.25, beat:36,   dur:1 },
+  { voice:"flute", freq:830.61, beat:37,   dur:0.5 },
+  { voice:"flute", freq:987.77, beat:37.5, dur:1.5 },
+
+  // m10: A5♩ F#5♪ | E5♩.
+  { voice:"flute", freq:880.00, beat:39,   dur:1 },
+  { voice:"flute", freq:739.99, beat:40,   dur:0.5 },
+  { voice:"flute", freq:659.25, beat:40.5, dur:1.5 },
+
+  // m11: C#6♩ B5♪ | A5♩ G#5♪
+  { voice:"flute", freq:1108.73, beat:42,   dur:1 },
+  { voice:"flute", freq:987.77,  beat:43,   dur:0.5 },
+  { voice:"flute", freq:880.00,  beat:43.5, dur:1 },
+  { voice:"flute", freq:830.61,  beat:44.5, dur:0.5 },
+
+  // m12: F#5♩ E5♪ | C#5♩.
+  { voice:"flute", freq:739.99, beat:45,   dur:1 },
+  { voice:"flute", freq:659.25, beat:46,   dur:0.5 },
+  { voice:"flute", freq:554.37, beat:46.5, dur:1.5 },
+
+  // m13: B4♩ C#5♪ | D#5♩ E5♪
+  { voice:"flute", freq:493.88, beat:48,   dur:1 },
+  { voice:"flute", freq:554.37, beat:49,   dur:0.5 },
+  { voice:"flute", freq:622.25, beat:49.5, dur:1 },
+  { voice:"flute", freq:659.25, beat:50.5, dur:0.5 },
+
+  // m14: F#5♩ A5♪ | C#6♩.
+  { voice:"flute", freq:739.99,  beat:51,   dur:1 },
+  { voice:"flute", freq:880.00,  beat:52,   dur:0.5 },
+  { voice:"flute", freq:1108.73, beat:52.5, dur:1.5 },
+
+  // m15: B5♩ A5♪ | G#5♩ F#5♪
+  { voice:"flute", freq:987.77, beat:54,   dur:1 },
+  { voice:"flute", freq:880.00, beat:55,   dur:0.5 },
+  { voice:"flute", freq:830.61, beat:55.5, dur:1 },
+  { voice:"flute", freq:739.99, beat:56.5, dur:0.5 },
+
+  // m16: E5♩. | E5♩.
+  { voice:"flute", freq:659.25, beat:57,   dur:1.5 },
+  { voice:"flute", freq:659.25, beat:58.5, dur:1.5 },
+
+  // B部ベース
+  { voice:"cello", freq:110.00, beat:36, dur:3 }, // A2 m9
+  { voice:"cello", freq:146.83, beat:39, dur:3 }, // D3 m10
+  { voice:"cello", freq:110.00, beat:42, dur:3 }, // A2 m11
+  { voice:"cello", freq:82.41,  beat:45, dur:3 }, // E2 m12
+  { voice:"cello", freq:92.50,  beat:48, dur:3 }, // F#2 m13
+  { voice:"cello", freq:146.83, beat:51, dur:3 }, // D3 m14
+  { voice:"cello", freq:82.41,  beat:54, dur:3 }, // E2 m15
+  { voice:"cello", freq:82.41,  beat:57, dur:3 }, // E2 m16
+
+  // B部ハープ
+  { voice:"harp", freq:220.00, beat:36,   dur:0.5 }, // A3
+  { voice:"harp", freq:277.18, beat:36.5, dur:0.5 }, // C#4
+  { voice:"harp", freq:415.30, beat:37,   dur:0.5 }, // G#4
+  { voice:"harp", freq:220.00, beat:39,   dur:0.5 }, // A3
+  { voice:"harp", freq:293.66, beat:39.5, dur:0.5 }, // D4
+  { voice:"harp", freq:369.99, beat:40,   dur:0.5 }, // F#4
+  { voice:"harp", freq:220.00, beat:42,   dur:0.5 }, // A3
+  { voice:"harp", freq:277.18, beat:42.5, dur:0.5 }, // C#4
+  { voice:"harp", freq:415.30, beat:43,   dur:0.5 }, // G#4
+  { voice:"harp", freq:164.81, beat:45,   dur:0.5 }, // E3
+  { voice:"harp", freq:220.00, beat:45.5, dur:0.5 }, // A3
+  { voice:"harp", freq:277.18, beat:46,   dur:0.5 }, // C#4
+  { voice:"harp", freq:185.00, beat:48,   dur:0.5 }, // F#3
+  { voice:"harp", freq:246.94, beat:48.5, dur:0.5 }, // B3
+  { voice:"harp", freq:311.13, beat:49,   dur:0.5 }, // D#4
+  { voice:"harp", freq:146.83, beat:51,   dur:0.5 }, // D3
+  { voice:"harp", freq:220.00, beat:51.5, dur:0.5 }, // A3
+  { voice:"harp", freq:369.99, beat:52,   dur:0.5 }, // F#4
+  { voice:"harp", freq:164.81, beat:54,   dur:0.5 }, // E3
+  { voice:"harp", freq:220.00, beat:54.5, dur:0.5 }, // A3
+  { voice:"harp", freq:415.30, beat:55,   dur:0.5 }, // G#4
+  { voice:"harp", freq:164.81, beat:57,   dur:0.5 }, // E3
+  { voice:"harp", freq:220.00, beat:57.5, dur:0.5 }, // A3
+  { voice:"harp", freq:329.63, beat:58,   dur:0.5 }, // E4
+  { voice:"harp", freq:220.00, beat:58.5, dur:0.5 }, // A3
+  { voice:"harp", freq:293.66, beat:59,   dur:0.5 }, // D4
+
+  // ── A'部 m17〜m24 ──
+
+  // 弱起 A4
+  { voice:"flute", freq:440.00, beat:59.5, dur:0.5 },
+
+  // m17: D5♩ F#5♪ | A5♩.（m1と同じ）
+  { voice:"flute", freq:587.33, beat:60,   dur:1 },
+  { voice:"flute", freq:739.99, beat:61,   dur:0.5 },
+  { voice:"flute", freq:880.00, beat:61.5, dur:1.5 },
+
+  // m18: G5♩ E5♪ | D5♩.（m2と同じ）
+  { voice:"flute", freq:783.99, beat:63,   dur:1 },
+  { voice:"flute", freq:659.25, beat:64,   dur:0.5 },
+  { voice:"flute", freq:587.33, beat:64.5, dur:1.5 },
+
+  // m19: F#5♩ G5♪ | A5♩ B5♪（m3と同じ）
+  { voice:"flute", freq:739.99, beat:66,   dur:1 },
+  { voice:"flute", freq:783.99, beat:67,   dur:0.5 },
+  { voice:"flute", freq:880.00, beat:67.5, dur:1 },
+  { voice:"flute", freq:987.77, beat:68.5, dur:0.5 },
+
+  // m20: A5♩ F#5♪ | D5♩.（m4と同じ）
+  { voice:"flute", freq:880.00, beat:69,   dur:1 },
+  { voice:"flute", freq:739.99, beat:70,   dur:0.5 },
+  { voice:"flute", freq:587.33, beat:70.5, dur:1.5 },
+
+  // m21: E5♩ D5♪ | C#5♩ A4♪（m5の変形・最後A4まで深く）
+  { voice:"flute", freq:659.25, beat:72,   dur:1 },
+  { voice:"flute", freq:587.33, beat:73,   dur:0.5 },
+  { voice:"flute", freq:554.37, beat:73.5, dur:1 },
+  { voice:"flute", freq:440.00, beat:74.5, dur:0.5 },
+
+  // m22: F#4♩ A4♪ | D5♩ F#5♪（新しい動き）
+  { voice:"flute", freq:369.99, beat:75,   dur:1 },
+  { voice:"flute", freq:440.00, beat:76,   dur:0.5 },
+  { voice:"flute", freq:587.33, beat:76.5, dur:1 },
+  { voice:"flute", freq:739.99, beat:77.5, dur:0.5 },
+
+  // m23: A5♩ G5♪ | F#5♩ E5♪（穏やかに降りる）
+  { voice:"flute", freq:880.00, beat:78,   dur:1 },
+  { voice:"flute", freq:783.99, beat:79,   dur:0.5 },
+  { voice:"flute", freq:739.99, beat:79.5, dur:1 },
+  { voice:"flute", freq:659.25, beat:80.5, dur:0.5 },
+
+  // m24: D5♩. | D4♩.（高いDから低いDへ着地）
+  { voice:"flute", freq:587.33, beat:81,   dur:1.5 },
+  { voice:"flute", freq:293.66, beat:82.5, dur:1.5 },
+
+  // A'部ベース
+  { voice:"cello", freq:146.83, beat:60, dur:3 }, // D3 m17
+  { voice:"cello", freq:98.00,  beat:63, dur:3 }, // G2 m18
+  { voice:"cello", freq:110.00, beat:66, dur:3 }, // A2 m19
+  { voice:"cello", freq:146.83, beat:69, dur:3 }, // D3 m20
+  { voice:"cello", freq:110.00, beat:72, dur:3 }, // A2 m21
+  { voice:"cello", freq:73.42,  beat:75, dur:3 }, // D2 m22（低いD）
+  { voice:"cello", freq:110.00, beat:78, dur:3 }, // A2 m23
+  { voice:"cello", freq:73.42,  beat:81, dur:2.8 }, // D2 m24（着地）
+
+  // A'部ハープ
+  { voice:"harp", freq:220.00, beat:60,   dur:0.5 }, // A3
+  { voice:"harp", freq:293.66, beat:60.5, dur:0.5 }, // D4
+  { voice:"harp", freq:369.99, beat:61,   dur:0.5 }, // F#4
+  { voice:"harp", freq:220.00, beat:63,   dur:0.5 }, // A3
+  { voice:"harp", freq:293.66, beat:63.5, dur:0.5 }, // D4
+  { voice:"harp", freq:369.99, beat:64,   dur:0.5 }, // F#4
+  { voice:"harp", freq:220.00, beat:66,   dur:0.5 }, // A3
+  { voice:"harp", freq:277.18, beat:66.5, dur:0.5 }, // C#4
+  { voice:"harp", freq:369.99, beat:67,   dur:0.5 }, // F#4
+  { voice:"harp", freq:220.00, beat:69,   dur:0.5 }, // A3
+  { voice:"harp", freq:293.66, beat:69.5, dur:0.5 }, // D4
+  { voice:"harp", freq:369.99, beat:70,   dur:0.5 }, // F#4
+  { voice:"harp", freq:220.00, beat:72,   dur:0.5 }, // A3
+  { voice:"harp", freq:277.18, beat:72.5, dur:0.5 }, // C#4
+  { voice:"harp", freq:369.99, beat:73,   dur:0.5 }, // F#4
+  { voice:"harp", freq:146.83, beat:75,   dur:0.5 }, // D3
+  { voice:"harp", freq:220.00, beat:75.5, dur:0.5 }, // A3
+  { voice:"harp", freq:369.99, beat:76,   dur:0.5 }, // F#4
+  { voice:"harp", freq:164.81, beat:78,   dur:0.5 }, // E3
+  { voice:"harp", freq:220.00, beat:78.5, dur:0.5 }, // A3
+  { voice:"harp", freq:369.99, beat:79,   dur:0.5 }, // F#4
+  { voice:"harp", freq:146.83, beat:81,   dur:0.5 }, // D3
+  { voice:"harp", freq:220.00, beat:81.5, dur:0.5 }, // A3
+  { voice:"harp", freq:293.66, beat:82,   dur:0.5 }, // D4
+
+  // A'部→エンディング橋渡し
+  { voice:"harp", freq:185.00, beat:82.5, dur:0.5 }, // F#3
+  { voice:"harp", freq:146.83, beat:83,   dur:0.5 }, // D3
+  { voice:"harp", freq:110.00, beat:83.5, dur:0.5 }, // A2
+
+  // ── エンディング m25〜m30 ──
+
+  // m25: F#4♩ E4♪ | D4♩.
+  { voice:"flute", freq:369.99, beat:84,   dur:1 },
+  { voice:"flute", freq:329.63, beat:85,   dur:0.5 },
+  { voice:"flute", freq:293.66, beat:85.5, dur:1.5 },
+
+  // m26: C#4♩ B3♪ | A3♩.
+  { voice:"flute", freq:277.18, beat:87,   dur:1 },
+  { voice:"flute", freq:246.94, beat:88,   dur:0.5 },
+  { voice:"flute", freq:220.00, beat:88.5, dur:1.5 },
+
+  // m27: F#3♩. | G3♩.
+  { voice:"flute", freq:185.00, beat:90,   dur:1.5 },
+  { voice:"flute", freq:196.00, beat:91.5, dur:1.5 },
+
+  // m28: F#3♩. | E3♩.
+  { voice:"flute", freq:185.00, beat:93,   dur:1.5 },
+  { voice:"flute", freq:164.81, beat:94.5, dur:1.5 },
+
+  // m29: D3♩..
+  { voice:"flute", freq:146.83, beat:96,   dur:3 },
+
+  // m30: D3○
+  { voice:"flute", freq:146.83, beat:99,   dur:4 },
+
+  // エンディングベース
+  { voice:"cello", freq:73.42,  beat:84, dur:3 }, // D2 m25
+  { voice:"cello", freq:55.00,  beat:87, dur:3 }, // A1 m26
+  { voice:"cello", freq:73.42,  beat:90, dur:3 }, // D2 m27
+  { voice:"cello", freq:55.00,  beat:93, dur:3 }, // A1 m28
+  { voice:"cello", freq:73.42,  beat:96, dur:3 }, // D2 m29
+  { voice:"cello", freq:73.42,  beat:99, dur:4 }, // D2 m30
+
+  // エンディングハープ
+  { voice:"harp", freq:146.83, beat:84,   dur:0.5 }, // D3
+  { voice:"harp", freq:185.00, beat:84.5, dur:0.5 }, // F#3
+  { voice:"harp", freq:220.00, beat:85,   dur:0.5 }, // A3
+  { voice:"harp", freq:146.83, beat:87,   dur:0.5 }, // D3
+  { voice:"harp", freq:185.00, beat:87.5, dur:0.5 }, // F#3
+  { voice:"harp", freq:220.00, beat:88,   dur:0.5 }, // A3
+  { voice:"harp", freq:146.83, beat:90,   dur:1.5 }, // D3
+  { voice:"harp", freq:146.83, beat:93,   dur:1.5 }, // D3
+  { voice:"harp", freq:146.83, beat:96,   dur:3 },   // D3
+];
+
+function showError(msg) {
+  document.getElementById('error').textContent = msg;
+}
+
+function applyADSR(gainNode, startTime, attack, decay, sustain, release, duration, volume) {
+  const g = gainNode.gain;
+  g.cancelScheduledValues(startTime);
+  g.setValueAtTime(0.0001, startTime);
+  g.linearRampToValueAtTime(volume, startTime + attack);
+  g.linearRampToValueAtTime(volume * sustain + 0.0001, startTime + attack + decay);
+  g.setValueAtTime(volume * sustain + 0.0001, startTime + duration);
+  g.exponentialRampToValueAtTime(0.0001, startTime + duration + release);
+}
+
+function playFlute(ctx, freq, startTime, duration) {
+  const attack  = 0.03;
+  const decay   = 0.1;
+  const sustain = 0.75;
+  const release = 0.4;
+  const volume  = 0.28;  // 倍音加算込みで最終的に約0.4相当
+
+  const osc1 = ctx.createOscillator();
+  osc1.type = 'sine';
+  osc1.frequency.value = freq;
+
+  const osc2 = ctx.createOscillator();
+  osc2.type = 'sine';
+  osc2.frequency.value = freq * 2;
+
+  const harmGain = ctx.createGain();
+  harmGain.gain.value = 0.25;
+
+  const env = ctx.createGain();
+  // ctx.currentTime ではなく startTime 基点で統一する
+  env.gain.value = 0.0001;
+  env.gain.setValueAtTime(0.0001, startTime);
+  env.gain.linearRampToValueAtTime(volume, startTime + attack);
+  env.gain.linearRampToValueAtTime(
+    volume * sustain + 0.0001,
+    startTime + attack + decay
+  );
+  env.gain.setValueAtTime(
+    volume * sustain + 0.0001,
+    startTime + duration
+  );
+  env.gain.exponentialRampToValueAtTime(
+    0.0001,
+    startTime + duration + release
+  );
+
+  osc1.connect(env);
+  osc2.connect(harmGain);
+  harmGain.connect(env);
+  env.connect(masterGainNode);
+
+  const stopTime = startTime + duration + release + 0.05;
+  osc1.start(startTime); osc1.stop(stopTime);
+  osc2.start(startTime); osc2.stop(stopTime);
+}
+
+function playStrings(ctx, freq, startTime, duration) {
+  const gain = ctx.createGain();
+  gain.connect(masterGainNode);
+  applyADSR(gain, startTime, 0.08, 0.2, 0.7, 0.5, duration, 0.35);
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.setValueAtTime(800, startTime);
+  filter.Q.setValueAtTime(1.5, startTime);
+  filter.connect(gain);
+
+  const osc = ctx.createOscillator();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(freq, startTime);
+  osc.connect(filter);
+  osc.start(startTime);
+  osc.stop(startTime + duration + 0.5 + 0.01);
+}
+
+function playCello(ctx, freq, startTime, duration) {
+  const gain = ctx.createGain();
+  gain.connect(masterGainNode);
+  applyADSR(gain, startTime, 0.03, 0.1, 0.75, 0.5, duration, 0.45);
+
+  const peaking = ctx.createBiquadFilter();
+  peaking.type = 'peaking';
+  peaking.frequency.setValueAtTime(120, startTime);
+  peaking.gain.setValueAtTime(2, startTime);
+  peaking.Q.setValueAtTime(2, startTime);
+
+  const highshelf = ctx.createBiquadFilter();
+  highshelf.type = 'highshelf';
+  highshelf.frequency.setValueAtTime(600, startTime);
+  highshelf.gain.setValueAtTime(-8, startTime);
+
+  peaking.connect(highshelf);
+  highshelf.connect(gain);
+
+  const osc = ctx.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(freq, startTime);
+  osc.connect(peaking);
+  osc.start(startTime);
+  osc.stop(startTime + duration + 0.3 + 0.01);
+}
+
+function playHarp(ctx, freq, startTime, duration) {
+  const attack  = 0.015;
+  const release = 0.8;
+
+  const osc1 = ctx.createOscillator();
+  const osc2 = ctx.createOscillator();
+  const osc3 = ctx.createOscillator();
+  osc1.type = "sine"; osc1.frequency.value = freq;
+  osc2.type = "sine"; osc2.frequency.value = freq * 2;
+  osc3.type = "sine"; osc3.frequency.value = freq * 3;
+
+  const g2 = ctx.createGain(); g2.gain.value = 0.2;
+  const g3 = ctx.createGain(); g3.gain.value = 0.1;
+
+  const env = ctx.createGain();
+  env.gain.value = 0.0001;
+  env.gain.setValueAtTime(0.0001, startTime);
+  env.gain.linearRampToValueAtTime(0.4, startTime + attack);
+  env.gain.linearRampToValueAtTime(0.0001, startTime + attack + release);
+
+  osc1.connect(env);
+  osc2.connect(g2); g2.connect(env);
+  osc3.connect(g3); g3.connect(env);
+  env.connect(masterGainNode);
+
+  const stopTime = startTime + attack + release + 0.05;
+  osc1.start(startTime); osc1.stop(stopTime);
+  osc2.start(startTime); osc2.stop(stopTime);
+  osc3.start(startTime); osc3.stop(stopTime);
+}
+
+// 進行バー用
+let rafId = null;
+let seqStartTime = null;
+const TOTAL_BEATS = 103;
+
+function formatTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60).toString().padStart(2, '0');
+  return m + ':' + s;
+}
+
+function updateProgressBar() {
+  if (!ctx || !seqStartTime) return;
+  const elapsed = ctx.currentTime - seqStartTime;
+  const totalSec = TOTAL_BEATS * BEAT;
+  const pct = Math.min(elapsed / totalSec, 1.0) * 100;
+  document.getElementById('progress-bar-fill').style.width = pct + '%';
+  document.getElementById('time-current').textContent = formatTime(elapsed);
+  document.getElementById('time-total').textContent = formatTime(totalSec);
+  if (pct < 100) {
+    rafId = requestAnimationFrame(updateProgressBar);
+  }
+}
+
+// クリックでシーク（指定位置から再生）
+document.getElementById('progress-bar-bg').addEventListener('click', async function(e) {
+  if (!seqStartTime) return;
+  const rect = this.getBoundingClientRect();
+  const ratio = (e.clientX - rect.left) / rect.width;
+  const seekBeat = ratio * TOTAL_BEATS;
+
+  // いったん停止して再初期化
+  if (ctx) { await ctx.close(); ctx = null; }
+  ctx = new AudioContext();
+  masterGainNode = ctx.createGain();
+  masterGainNode.gain.setValueAtTime(0.55, ctx.currentTime);
+  masterGainNode.connect(ctx.destination);
+
+  // seekBeat以降の音符だけ鳴らす
+  const startTime = ctx.currentTime + 0.1;
+  seqStartTime = startTime - seekBeat * BEAT;
+  score.forEach(note => {
+    const t = startTime + (note.beat - seekBeat) * BEAT;
+    const d = note.dur * BEAT;
+    if (t < ctx.currentTime) return;
+    switch (note.voice) {
+      case "flute":   playFlute(ctx, note.freq, t, d);   break;
+      case "harp":    playHarp(ctx, note.freq, t, d);    break;
+      case "cello":   playCello(ctx, note.freq, t, d);   break;
+      case "strings": playStrings(ctx, note.freq, t, d); break;
+    }
+  });
+
+  // シーク時のフェードアウト
+  const fadeStartBeat = 99;
+  const fadeEndBeat   = 103.7;
+  const fadeSt = startTime + (fadeStartBeat - seekBeat) * BEAT;
+  const fadeEd = startTime + (fadeEndBeat   - seekBeat) * BEAT;
+  if (fadeEd > ctx.currentTime) {
+    masterGainNode.gain.setValueAtTime(
+      0.55, Math.max(fadeSt, ctx.currentTime + 0.01)
+    );
+    masterGainNode.gain.exponentialRampToValueAtTime(
+      0.0001, fadeEd
+    );
+  }
+
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = requestAnimationFrame(updateProgressBar);
+});
+
+function startSequencer(ctx) {
+  const startTime = ctx.currentTime + 0.1;
+  seqStartTime = startTime;
+  score.forEach(note => {
+    const t = startTime + note.beat * BEAT;
+    const d = note.dur * BEAT;
+    switch (note.voice) {
+      case "flute":   playFlute(ctx, note.freq, t, d);   break;
+      case "harp":    playHarp(ctx, note.freq, t, d);    break;
+      case "cello":   playCello(ctx, note.freq, t, d);   break;
+      case "strings": playStrings(ctx, note.freq, t, d); break;
+    }
+  });
+
+  // m30（beat99）からフェードアウト開始
+  const fadeStartBeat = 99;
+  const fadeEndBeat   = 103.7;
+  const fadeStart = startTime + fadeStartBeat * BEAT;
+  const fadeEnd   = startTime + fadeEndBeat   * BEAT;
+  masterGainNode.gain.setValueAtTime(0.55, fadeStart);
+  masterGainNode.gain.exponentialRampToValueAtTime(
+    0.0001, fadeEnd
+  );
+
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = requestAnimationFrame(updateProgressBar);
+  const total = (103 * BEAT + 0.5 + 0.1) * 1000;
+  setTimeout(resetButtons, total);
+}
+
+function resetButtons() {
+  document.getElementById('btn-play').disabled = false;
+  document.getElementById('btn-stop').disabled = true;
+}
+
+async function onPlay() {
+  if (ctx) { await ctx.close(); ctx = null; }
+  ctx = new AudioContext();
+  masterGainNode = ctx.createGain();
+  masterGainNode.gain.setValueAtTime(0.55, ctx.currentTime);
+  masterGainNode.connect(ctx.destination);
+  startSequencer(ctx);
+  document.getElementById('btn-play').disabled = true;
+  document.getElementById('btn-stop').disabled = false;
+}
+
+async function onStop() {
+  try {
+    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    if (ctx) { await ctx.close(); ctx = null; masterGainNode = null; }
+    seqStartTime = null;
+    document.getElementById('progress-bar-fill').style.width = '0%';
+    document.getElementById('time-current').textContent = '0:00';
+    resetButtons();
+  } catch (e) {
+    showError('停止エラー: ' + e);
+  }
+}
+</script>
+</body>
+</html>
